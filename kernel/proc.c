@@ -102,6 +102,9 @@ allocproc(void)
       release(&p->lock);
     }
   }
+
+  p->mask = 0;
+
   return 0;
 
 found:
@@ -274,6 +277,8 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  
+  np->mask = p->mask;
 
   np->parent = p;
 

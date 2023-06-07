@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sysinfo.h"
 
 struct cpu cpus[NCPU];
 
@@ -278,7 +279,7 @@ fork(void)
   }
   np->sz = p->sz;
   
-  np->mask = p->mask;
+  np->mask = p->mask; // Add
 
   np->parent = p;
 
@@ -697,4 +698,17 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+void countProc(void* ptr) {
+  struct sysinfo* inf = (struct sysinfo*)ptr;
+  acquire(&pid_lock);
+  int count = 0;
+  for (int i = 0 ; i < NPROC; i++) {
+    if (proc[i].state != UNUSED) {
+      count++;
+    }
+  }
+  inf->nproc = count;
+  release(&pid_lock);
 }

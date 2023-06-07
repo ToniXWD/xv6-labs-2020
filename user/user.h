@@ -1,5 +1,8 @@
 struct stat;
 struct rtcdate;
+// Add
+struct sysinfo;
+// 用户态程序跳板函数
 
 // system calls
 int fork(void);
@@ -41,4 +44,6 @@ int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
 
+// Add
 int trace(int);
+int sysinfo(struct sysinfo *);

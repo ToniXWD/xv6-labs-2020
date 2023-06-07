@@ -1,7 +1,7 @@
-#include "kernel/types.h"
-#include "kernel/riscv.h"
-#include "kernel/sysinfo.h"
-#include "user/user.h"
+#include "../kernel/types.h"
+#include "../kernel/riscv.h"
+#include "../kernel/sysinfo.h"
+#include "./user.h"
 
 
 void

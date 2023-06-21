@@ -467,5 +467,6 @@ for (int i = 0; i < 512; i++) {
 
 void
 vmprint(pagetable_t pgt) {
+  printf("page table %p\n",pgt);
   walk_print(pgt, 0);
 }

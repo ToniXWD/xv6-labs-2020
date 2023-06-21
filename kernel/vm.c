@@ -15,6 +15,12 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+char* vm_str_lev[] = {
+  "..",
+  ".. ..",
+  ".. .. .."
+};
+
 /*
  * create a direct-map page table for the kernel.
  */
@@ -439,4 +445,27 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void
+walk_print(pagetable_t pgt, int level) {
+for (int i = 0; i < 512; i++) {
+  pte_t pte = pgt[i];
+  if ((pte & PTE_V) == 0)
+    continue;
+
+  uint64 child = PTE2PA(pte);
+  printf(vm_str_lev[level]);
+  printf("%d: pte %p pa %p\n",i,pte,child);
+
+  if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+    // this PTE points to a lower-level page table.
+    walk_print((pagetable_t)child, level+1);
+  }
+}
+}
+
+void
+vmprint(pagetable_t pgt) {
+  walk_print(pgt, 0);
 }

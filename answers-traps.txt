@@ -1,0 +1,17 @@
+q1
+a0-a7; a2
+
+q2
+There is none. g(x) is inlined within f(x) and f(x) is further inlined into main()
+
+q3
+0x630
+
+q4
+0x38
+
+q5
+He110 World
+
+q6
+该值对应寄存器a2，在运行过程中该值可能会变化

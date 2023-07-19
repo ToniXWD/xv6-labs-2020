@@ -121,6 +121,11 @@ found:
     return 0;
   }
 
+  p->alarm_func = 0;
+  p->alarm_inter = 0; // 0 表示目前没有设置alarm
+  p->tick_count = 0;
+  p->is_in_handler = 0;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));

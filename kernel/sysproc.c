@@ -39,6 +39,30 @@ sys_wait(void)
 }
 
 uint64
+mysys_sbrk(void)
+{
+  uint64 addr;
+  int n;
+  // if(growproc(n) < 0)
+  //   return -1;
+  struct proc* p = myproc();
+
+  if(argint(0, &n) < 0)
+    return -1;
+
+  addr = p->sz;
+
+  if (n < 0) {
+    // 缩小内存的情况直接立即释放
+    p->sz = uvmdealloc(p->pagetable, addr, addr + n);
+  } else {
+    p->sz = addr + n;
+  }
+
+  return addr;
+}
+
+uint64
 sys_sbrk(void)
 {
   int addr;
@@ -47,8 +71,20 @@ sys_sbrk(void)
   if(argint(0, &n) < 0)
     return -1;
   addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
+  // if(growproc(n) < 0)
+  //   return -1;
+  // // part 1 begin
+  // myproc()->sz += n;
+  // // part 1 end
+  // part 3 begin
+  if (n >= 0) {
+    myproc()->sz += n;
+  } else {
+    // n < 0时直接删除映射
+    uint sz = myproc()->sz;
+    myproc()->sz = uvmdealloc(myproc()->pagetable, sz, sz + n);
+  }
+  // part 3 end
   return addr;
 }
 
@@ -95,3 +131,4 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+

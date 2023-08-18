@@ -325,12 +325,14 @@ sfence_vma()
 
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
+#define PA2MAPIDX(PA) ((PA-KERNBASE) >> 12) // 从实际内存地址获取引用计数的数组的索引，要求VA为4096的倍数
 
 #define PTE_V (1L << 0) // valid
 #define PTE_R (1L << 1)
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // 1 -> user can access
+#define PTE_RSW8 (1L << 8) // 利用第8位描述是否为 COW fork 的 page
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

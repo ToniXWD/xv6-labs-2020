@@ -67,14 +67,28 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 15) {
+    // 15: store page fault
+    uint64 va = r_stval();
+    // if (va >= p->sz || va < p->trapframe->sp) {
+    //   // 如果虚拟内存地址大于sz 或 进入到stack的范围，直接kill
+    //   p->killed = 1;
+    //   goto ret;
+    // }
+    // printf("page fault %p\n", va);
+    int cow_ans = handle_cow_fault(va);
+    if (cow_ans != 0) {
+      goto ret;
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
 
-  if(p->killed)
-    exit(-1);
+  ret:
+    if(p->killed)
+      exit(-1);
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)

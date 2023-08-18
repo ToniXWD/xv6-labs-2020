@@ -5,7 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
+#include "spinlock.h"
+#include "proc.h"
 /*
  * the kernel's page table.
  */
@@ -13,7 +14,10 @@ pagetable_t kernel_pagetable;
 
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
-extern char trampoline[]; // trampoline.S
+extern char trampoline[]; // trampoline.S'
+
+extern char page_map[]; // page的引用计数
+extern struct spinlock map_lock; 
 
 /*
  * create a direct-map page table for the kernel.
@@ -311,20 +315,34 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+
     pa = PTE2PA(*pte);
+
+    // 更新引用计数
+    acquire(&map_lock);
+    uint64 map_idx = PA2MAPIDX(PGROUNDDOWN(pa));
+    page_map[map_idx] ++;
+    release(&map_lock);
+
+    // 清除 PTE_W 位
+    *pte &= (~PTE_W);
+    // 标记其为 COW fork 的页
+    *pte |= PTE_RSW8;
+
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      // kfree(mem);
       goto err;
     }
   }
@@ -361,6 +379,23 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
+    
+    // 找到对应的pte指针
+    pte_t* pte = walk(pagetable, va0, 0);
+    if (pte == 0) {
+      return -1;
+    }
+
+    // 不可写时调用COW
+    if ((*pte & PTE_W) == 0) {
+      int ans = handle_cow_fault(va0);
+      if (ans != 0) {
+        return -1;
+      }
+    }
+    // 更新地址
+    pa0 = PTE2PA(*pte);
+    
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -439,4 +474,60 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// 返回值：-1表示va不存在匹配的页表项
+// 返回值：1表示va不是COW后引起的page fault
+int handle_cow_fault(uint64 va) {
+  if (va >= MAXVA) {
+      return -1;
+  }
+
+  struct proc* p = myproc();
+
+  pte_t *pte = walk(p->pagetable, va, 0);
+  if (pte == 0) {
+    return -1;
+  }
+  if (((*pte) & PTE_RSW8) == 0) {
+    // RSW第8位并未设置，说明该va不是COW后引起的page fault
+    return -2;
+  }
+
+  if (((*pte) & PTE_U) == 0) {
+    // RSW第8位并未设置，说明该va不是COW后引起的page fault
+    return -3;
+  }
+
+  // 先更新引用计数
+  uint64 old_pa = PTE2PA(*pte);
+  uint64 map_idx = PA2MAPIDX(PGROUNDDOWN(old_pa));
+
+  page_map[map_idx]--;
+
+  // 开始处理COW造成的page fault
+
+  if (page_map[map_idx] == 0) {
+    // 如果引用计数到达了0，表示这是最后一个共享内存page的进程，只需要赋予其写权限即可
+
+    // 将flags标记为可写
+    *pte |= PTE_W;
+    // 去除COW的标志
+    *pte &=( ~PTE_RSW8);
+    page_map[map_idx]++; // 将减去的引用计数+1
+  } else {
+    // 如果引用计数--后仍然大于0，表示需要重新分配一个可写的page
+    uint64 pa = (uint64) kalloc();
+
+    // 复制page的内容
+    memmove((char *)pa, (char *)old_pa, PGSIZE);
+
+    uint64 flags = PTE_FLAGS(*pte);
+
+    // 更新pte, 将flags标记为可写
+    *pte = PA2PTE(pa) | flags | PTE_W;
+    // 去除COW的标志
+    *pte &= (~PTE_RSW8);
+  }
+  return 0;
 }

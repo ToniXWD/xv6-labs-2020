@@ -30,7 +30,40 @@ barrier()
   // Block until all threads have called barrier() and
   // then increment bstate.round.
   //
+
+  // 先获取锁
+  pthread_mutex_lock(&bstate.barrier_mutex);
   
+  while (bstate.nthread == nthread && round != 0) {
+    // bstate.nthread == nthread 且 round != 0 表示：上一个epoch还有线程没有退出
+    // 需要等待线程一起进入本次epoch
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+  }
+
+  // 进入本次epoch的第一个线程需要将 nthread 重置
+  if (bstate.nthread == nthread) {
+    bstate.nthread = 0;
+  }
+
+  // round记录了正在使用bstate.nthread的线程数
+  round++;
+
+  int cur_round = bstate.round;
+  // 将达到barrier的线程数自增
+
+  bstate.nthread++;
+  while (bstate.nthread != nthread) {
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+  }
+
+  // 运行到此处时都已经到达了线程屏障
+  bstate.round = cur_round + 1;
+  round--;
+
+  // 唤醒线程
+  pthread_cond_broadcast(&bstate.barrier_cond);
+  // 释放锁
+  pthread_mutex_unlock(&bstate.barrier_mutex);
 }
 
 static void *
@@ -45,6 +78,7 @@ thread(void *xa)
     assert (i == t);
     barrier();
     usleep(random() % 100);
+    // printf("epoch %i complete\n",i);
   }
 
   return 0;

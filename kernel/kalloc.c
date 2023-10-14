@@ -86,8 +86,8 @@ kfree(void *pa)
 {
   push_off();
   int id = cpuid();
-  pop_off();
   kfree_cpu(pa, id);
+  pop_off();
 }
 
 void *
@@ -102,7 +102,10 @@ kalloc_cpu(int id)
     kmem[id].freelist = r->next;
   } else {
     // 否则向别的cpu的空闲列表寻找地址
-    for (int i = 0; i != id && i < NCPU; i++) {
+    for (int i = 0; i < NCPU; i++) {
+      if (id == i) {
+        continue;
+      }
       acquire(&kmem[i].lock);
       r = kmem[i].freelist;
       if (r) {
@@ -129,7 +132,7 @@ kalloc(void)
 {
   push_off();
   int id = cpuid();
-  pop_off();
   void * addr = kalloc_cpu(id);
+  pop_off();
   return addr;
 }

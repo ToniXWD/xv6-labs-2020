@@ -377,9 +377,10 @@ iunlockput(struct inode *ip)
 static uint
 bmap(struct inode *ip, uint bn)
 {
-  uint addr, *a;
-  struct buf *bp;
+  uint addr, *a, *b;
+  struct buf *bp, *bp2;
 
+  // bn: [0, 11)
   if(bn < NDIRECT){
     if((addr = ip->addrs[bn]) == 0)
       ip->addrs[bn] = addr = balloc(ip->dev);
@@ -401,6 +402,32 @@ bmap(struct inode *ip, uint bn)
     return addr;
   }
 
+  bn -= NINDIRECT;
+  if (bn < D_NINDIRECT) {
+    // 如果双层间接块不存在, 则分配一个
+    if((addr = ip->addrs[NDIRECT + 1]) == 0)
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    uint offset = bn % NINDIRECT;
+    uint a_id = bn / NINDIRECT;
+    if ((addr = a[a_id]) == 0) {
+      a[a_id] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+
+    // 最终存放数据的块
+    bp2 = bread(ip->dev, addr);
+    b = (uint*)bp2->data;
+    if((addr = b[offset]) == 0){
+      b[offset] = addr = balloc(ip->dev);
+      log_write(bp2);
+    }
+    brelse(bp2);
+    return addr;
+  }
+
   panic("bmap: out of range");
 }
 
@@ -410,8 +437,8 @@ void
 itrunc(struct inode *ip)
 {
   int i, j;
-  struct buf *bp;
-  uint *a;
+  struct buf *bp, *bp2;
+  uint *a, *b;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -430,6 +457,32 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  if(ip->addrs[NDIRECT + 1]){
+    // bp是第一个间接块
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+    // a是第一个间接块的数据域
+    a = (uint*)bp->data;
+    for(i = 0; i < NINDIRECT; i++){
+      if(a[i]) {
+        // bp2是第二个间接块
+        bp2 = bread(ip->dev, a[i]);
+        // b是第二个间接块的数据域
+        b = (uint*)bp2->data;
+        for(j = 0; j < NINDIRECT; j++){
+          if (b[j]) {
+            // b[j] 指向的是最终的数据块
+            bfree(ip->dev, b[j]);
+          }
+        }
+        brelse(bp2);
+        bfree(ip->dev, a[i]);
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;

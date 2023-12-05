@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "proc.h"
+#include "fcntl.h"
 
 /*
  * the kernel's page table.
@@ -14,6 +19,8 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+// int va_2_vma_id_igore_use(struct proc *p, uint64 va);
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -145,8 +152,10 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
+    if(*pte & PTE_V) {
+      printf("remap,  PGROUNDDOWN(va) = %p\n", a);
       panic("remap");
+    }
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -171,8 +180,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
+    if((*pte & PTE_V) == 0) {
+      printf("a = %p\n", a);
       panic("uvmunmap: not mapped");
+    }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -295,7 +306,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+uvmcopy(pagetable_t old, pagetable_t new, uint64 sz, struct proc * old_p)
 {
   pte_t *pte;
   uint64 pa, i;
@@ -305,8 +316,19 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
+    int vma_id = 0;
+    if((*pte & PTE_V) == 0) {
+      if (old_p != 0) {
+        vma_id = va_2_vma_id(old_p, i);
+        if (vma_id >= 0) {
+          continue;
+        }
+      }
+      printf("uvmcopy: i(va) = %p\n", i);
+      printf("uvmcopy: vma_id = %d\n", vma_id);
+      printf("uvmcopy: page begin pa = %p\n", PTE2PA(*pte));
       panic("uvmcopy: page not present");
+    }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -428,4 +450,99 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// 如果是还没映射的内存空间, 则返回对应的slot下标, 否则返回-1
+int va_2_vma_id(struct proc *p, uint64 va) {
+  for (int i = 0; i < 16; i++) {
+    if (p->mmap_vmas[i].in_use == 1 
+      && p->mmap_vmas[i].addr_start <= va 
+      && p->mmap_vmas[i].addr_start + p->mmap_vmas[i].length> va) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+
+// int va_2_vma_id_igore_use(struct proc *p, uint64 va) {
+//   for (int i = 0; i < 16; i++) {
+//     if (p->mmap_vmas[i].addr_start <= va 
+//       && p->mmap_vmas[i].addr_start + p->mmap_vmas[i].length> va) {
+//       return i;
+//     }
+//   }
+//   return -1;
+// }
+
+// 将指定slot的文件映射到内存
+int map_f(struct proc *p, int vma_id, uint64 va) {  
+  struct file* f = p->mmap_vmas[vma_id].f; // 记录文件描述符
+  uint64 addr_start = p->mmap_vmas[vma_id].addr_start; // 记录映射开始地址
+  // int length = p->mmap_areas[area_id].length; // 记录映射长度
+  int prot = p->mmap_vmas[vma_id].prot; // 记录prot
+  // int flags = p->mmap_areas[mmap_id].flags; // 记录flags
+  int offset = p->mmap_vmas[vma_id].offset; // 记录offset
+
+  // 开始进行映射
+  char *mem = kalloc();
+  if(mem == 0) {
+    // failed to allocate physical memory
+    // printf("lazy mmap alloc: out of memory\n");
+    panic("map_f: kalloc\n");
+  }
+  memset(mem, 0, PGSIZE);
+  // printf("map_fd: addr_start: %p, length: %p\n", addr_start, length);
+
+  // 读取文件内容
+  begin_op();
+  ilock(f->ip);
+  int readn = readi(f->ip, 0, (uint64)mem, offset + va - addr_start, PGSIZE);
+  if (readn < 0)
+    return -1;
+  iunlock(f->ip);
+  end_op();
+
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, (prot << 1)|PTE_U|PTE_V) < 0){
+    panic("map_f: mappages\n");
+  }
+  return 0;
+}
+
+int unmap_f(struct proc *p, int vma_id, uint64 va, int length) {  
+  pagetable_t pga = p->pagetable;
+  struct mmap_vma* vma = p->mmap_vmas + vma_id;
+
+  pte_t *pte;
+
+  for (uint64 addr = va; addr < va + length; addr += PGSIZE) {
+    if((pte = walk(pga, addr, 0)) == 0)
+      continue;
+
+    if (PTE_FLAGS(*pte) == PTE_V) {
+       panic("sys_munmap: invalid leaf");
+    }
+
+    if (*pte & PTE_V) {
+      uint64 pa = PTE2PA(*pte);
+      if ((*pte & PTE_D) && (vma->flags & MAP_SHARED)) {
+        begin_op();
+        ilock(vma->f->ip);
+
+        uint64 off = addr - vma->addr_start;
+        if (off < 0) {
+          writei(vma->f->ip, 0, pa - off, vma->offset, PGSIZE + off);
+        } else if(off + PGSIZE > vma->length){  // if the last page is not a full 4k page
+          writei(vma->f->ip, 0, pa, vma->offset + off, vma->length - off);
+        } else { // full 4k pages
+          writei(vma->f->ip, 0, pa, vma->offset + off, PGSIZE);
+        }
+        iunlock(vma->f->ip);
+        end_op();
+      }
+      kfree((void*)pa);
+      *pte = 0;
+    }
+  }
+  return 0;
 }

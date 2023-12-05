@@ -487,25 +487,117 @@ sys_pipe(void)
 
 uint64
 sys_mmap(void)
-{
-  uint64 addr;
-  int length, prot, flags, offset;
-  struct file *f;
+{  
+  // 参考lazy lab 中的sys_sbrk
+  struct proc *p = myproc();
+  struct mmap_vma* areas = p->mmap_vmas;
 
-  if(argaddr(0, &addr) != 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 || argint(3, &flags) < 0 || argfd(4, 0, &f) < 0 || argint(5, &offset) < 0 )
+  int vma_id = 0;
+  for (; vma_id < 16; vma_id++) {
+    if (areas[vma_id].in_use == 0) {
+      break;
+    }
+  }
+
+  if (vma_id >= 16) {
+    panic("no free slots for mmap ctx recored\n");
+  }
+
+  struct mmap_vma* vma = areas + vma_id;
+
+  if(argaddr(0, &vma->addr_start) != 0 || argint(1, &vma->length) < 0 || argint(2, &vma->prot) < 0 
+    || argint(3, &vma->flags) < 0 || argfd(4, 0, &vma->f) < 0 || argint(5, &vma->offset) < 0 )
     return -1;
-  if(addr != 0)
+  
+  if(vma->addr_start != 0)
     panic("only supports addr = 0");
-  if(offset != 0)
+  if(vma->offset != 0)
     panic("only supports offset = 0");
+
+  if ((!vma->f->readable && (vma->prot & PROT_READ))
+    ||
+      (!vma->f->writable && (vma->prot & PROT_WRITE) && !(vma->flags & MAP_PRIVATE))
+    ) {
+      return -1;
+  }
   
-  
-  return 0;
+  // 长度与PGSIZE向上对齐
+  vma->length = PGROUNDUP(vma->length);
+
+  vma->addr_start = p->sz;
+  p->sz += vma->length; // 懒分配
+
+  // printf("sys_mmap: addr_start = %p\n", target_ctx->addr_start);
+  // printf("sys_mmap: length = %p\n", target_ctx->length);
+
+  p->mmap_vmas[vma_id].in_use = 1;
+
+  // 将文件的引用计数增加一
+  filedup(vma->f);
+
+  return vma->addr_start;
 }
 
 uint64
 sys_munmap(void)
 {
+  uint64 va;
+  int length;
+  if(argaddr(0, &va) != 0 || argint(1, &length) < 0) {
+    return -1;
+  }
+
+  if (length == 0) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+
+  int vma_id = va_2_vma_id(p, va);
+  if (vma_id == -1) {
+    return -1;
+  }
+
+  struct mmap_vma* vma = p->mmap_vmas + vma_id;
+  
+  uint64 addr_start = vma->addr_start; // 记录映射开始地址
+  struct file* f = vma->f; // 记录文件描述符
+
+  if (va > addr_start && va + length < addr_start + vma->length) {
+    // 不允许在中间打洞
+    return -1;
+  }
+
+  // 如果起始地址va不是页的首地址, 哪释放的应该是之后的也, va所在的页则不能释放
+  uint64 va_up = va;
+  if (va > addr_start) {
+    va_up = PGROUNDUP(va);
+  }
+
+  int unmap_n = va + length - va_up;
+  if (unmap_n < 0) {
+    unmap_n = 0;
+  }
+  
+  int res = unmap_f(p, vma_id, va_up, unmap_n);
+
+  if (res != 0) {
+    return -1;
+  }
+
+  // 更新vma
+  if (va <= addr_start && va + length > addr_start) {
+    // 在首地址释放
+    vma->offset += va + length - addr_start;
+    vma->addr_start = va + length;
+  }
+  vma->length -= length;
+
+  if (vma->length <= 0) {
+    fileclose(f);
+    vma->in_use = 0;
+  }
+
   return 0;
 }
 

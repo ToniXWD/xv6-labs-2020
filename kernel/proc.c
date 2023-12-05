@@ -134,6 +134,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  for(int i = 0; i<16; i++) {
+    p->mmap_vmas[i].in_use = 0;
+  }
+
   return p;
 }
 
@@ -146,6 +150,10 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  // for mmap
+  for (int i = 0; i < 16; i++) {
+    unmap_f(p, i, p->mmap_vmas[i].addr_start, p->mmap_vmas[i].length);
+  }
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -275,7 +283,7 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz, p) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -295,6 +303,16 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  
+  // for mmap
+  for (int i = 0; i < 16; i++) {
+    struct mmap_vma *vma = &p->mmap_vmas[i];
+    if(vma->in_use) {
+      np->mmap_vmas[i] = *vma;
+      filedup(vma->f);
+    }
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 

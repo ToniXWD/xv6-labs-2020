@@ -68,9 +68,25 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    uint64 va = r_stval();
+    if(r_scause() == 13 || r_scause() == 15) {
+      // 缺页异常
+      struct proc *p = myproc();
+
+      int vma_id = va_2_vma_id(p, va);
+      if (vma_id >= 0) {
+        // 确认是还没有映射的mmap的内存区域
+        if(map_f(p, vma_id, va) != 0) {
+          panic("map file failed\n");
+        }
+      } else {
+        panic("handle mmap page falut failed\n");
+      }
+    } else {
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
   }
 
   if(p->killed)

@@ -484,3 +484,29 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  int length, prot, flags, offset;
+  struct file *f;
+
+  if(argaddr(0, &addr) != 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 || argint(3, &flags) < 0 || argfd(4, 0, &f) < 0 || argint(5, &offset) < 0 )
+    return -1;
+  if(addr != 0)
+    panic("only supports addr = 0");
+  if(offset != 0)
+    panic("only supports offset = 0");
+  
+  
+  return 0;
+}
+
+uint64
+sys_munmap(void)
+{
+  return 0;
+}
+
+

@@ -480,7 +480,7 @@ int map_f(struct proc *p, int vma_id, uint64 va) {
   struct file* f = p->mmap_vmas[vma_id].f; // 记录文件描述符
   uint64 addr_start = p->mmap_vmas[vma_id].addr_start; // 记录映射开始地址
   // int length = p->mmap_areas[area_id].length; // 记录映射长度
-  int prot = p->mmap_vmas[vma_id].prot; // 记录prot
+  // int prot = p->mmap_vmas[vma_id].prot; // 记录prot
   // int flags = p->mmap_areas[mmap_id].flags; // 记录flags
   int offset = p->mmap_vmas[vma_id].offset; // 记录offset
 
@@ -503,7 +503,7 @@ int map_f(struct proc *p, int vma_id, uint64 va) {
   iunlock(f->ip);
   end_op();
 
-  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, (prot << 1)|PTE_U|PTE_V) < 0){
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, PTE_R | PTE_W | PTE_U) < 0){
     panic("map_f: mappages\n");
   }
   return 0;
@@ -532,9 +532,9 @@ int unmap_f(struct proc *p, int vma_id, uint64 va, int length) {
         uint64 off = addr - vma->addr_start;
         if (off < 0) {
           writei(vma->f->ip, 0, pa - off, vma->offset, PGSIZE + off);
-        } else if(off + PGSIZE > vma->length){  // if the last page is not a full 4k page
+        } else if(off + PGSIZE > vma->length){  // 不是一个完整的PAGE
           writei(vma->f->ip, 0, pa, vma->offset + off, vma->length - off);
-        } else { // full 4k pages
+        } else { // 刚好对齐
           writei(vma->f->ip, 0, pa, vma->offset + off, PGSIZE);
         }
         iunlock(vma->f->ip);

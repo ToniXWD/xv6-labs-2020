@@ -80,9 +80,10 @@ usertrap(void)
           panic("map file failed\n");
         }
       } else {
-        panic("handle mmap page falut failed\n");
+        goto unknownFault;
       }
     } else {
+    unknownFault:
       printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
       printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
       p->killed = 1;

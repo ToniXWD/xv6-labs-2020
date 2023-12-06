@@ -15,6 +15,10 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
+
+#define MMAPTOP TRAPFRAME- PGSIZE // 留一个guard page
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -485,6 +489,20 @@ sys_pipe(void)
   return 0;
 }
 
+// 找到一个mmap的映射地址
+uint64 find_mmap_va(struct proc *p, uint64 length) {
+  uint64 va = MMAPTOP - PGSIZE;
+  for (int i = 0; i < 16; i++) {
+    if (p->mmap_vmas[i].in_use == 0)
+      continue;
+    va = min(p->mmap_vmas[i].addr_start, va);
+  }
+
+  va = PGROUNDDOWN(va);
+  va -= PGROUNDUP(length);
+  return va;
+}
+
 uint64
 sys_mmap(void)
 {  
@@ -524,8 +542,7 @@ sys_mmap(void)
   // 长度与PGSIZE向上对齐
   vma->length = PGROUNDUP(vma->length);
 
-  vma->addr_start = p->sz;
-  p->sz += vma->length; // 懒分配
+  vma->addr_start = find_mmap_va(p, vma->length);
 
   // printf("sys_mmap: addr_start = %p\n", target_ctx->addr_start);
   // printf("sys_mmap: length = %p\n", target_ctx->length);
